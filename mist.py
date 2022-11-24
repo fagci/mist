@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 
 from argparse import ArgumentParser
-from importlib.util import module_from_spec, spec_from_file_location
 from ipaddress import IPv4Address
-from pathlib import Path
 from random import randrange
 from socket import setdefaulttimeout, socket
-from subprocess import PIPE, Popen
-from sys import stderr
 from threading import Thread
 
 def eprint(*args, **kwargs):
+    from sys import stderr
     print(*args, file=stderr, **kwargs)
 
 def import_file(full_name, path):
+    from importlib.util import module_from_spec, spec_from_file_location
     spec = spec_from_file_location(full_name, path)
 
     if spec is None or spec.loader is None:
@@ -24,24 +22,34 @@ def import_file(full_name, path):
     return mod
 
 def make_handler(cb):
+    from pathlib import Path
+    from shutil import which
+
     file = Path(cb)
-    if  not file.exists():
+    is_cmd = which(cb)
+
+    if not file.exists() and not is_cmd:
         return lambda ip, port, s: eval(cb, locals(), locals())
 
     suf = file.suffix
-
-    if suf == '.sh':
-        def sh(ip, port, _):
-            p = Popen([file.absolute(), ip, str(port)], stdout=PIPE, stderr=PIPE)
-            out, err = p.communicate()
-            print(out.decode())
-        return sh
 
     if suf == '.py':
         m = import_file(file.name, file.absolute())
         def py(ip, port, s):
             m.handle(ip, port, s)
         return py
+
+    if file.is_file() or is_cmd:
+        def sh(ip, port, _):
+            from subprocess import PIPE, Popen
+            cmd = [cb if is_cmd else file.absolute(), ip, str(port)]
+            p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+            out, err = p.communicate()
+            if out:
+                print(out.decode())
+            if err:
+                eprint('[E] stderr:', err.decode())
+        return sh
 
     raise NotImplementedError(f'Extension {suf} not supported')
 
