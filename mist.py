@@ -4,7 +4,8 @@ from argparse import ArgumentParser
 from ipaddress import IPv4Address
 from random import randrange
 from socket import setdefaulttimeout, socket
-from threading import Thread
+from threading import Thread, BoundedSemaphore
+
 
 def eprint(*args, **kwargs):
     from sys import stderr
@@ -32,9 +33,10 @@ def make_handler(cb):
         return lambda ip, port, s: eval(cb, locals(), locals())
 
     suf = file.suffix
+    path = str(file.absolute())
 
     if suf == '.py':
-        m = import_file(file.name, file.absolute())
+        m = import_file(file.name, path)
         def py(ip, port, s):
             m.handle(ip, port, s)
         return py
@@ -42,13 +44,14 @@ def make_handler(cb):
     if file.is_file() or is_cmd:
         def sh(ip, port, _):
             from subprocess import PIPE, Popen
-            cmd = [cb if is_cmd else file.absolute(), ip, str(port)]
+            cmd = [cb if is_cmd else path, ip, str(port)]
             p = Popen(cmd, stdout=PIPE, stderr=PIPE)
             out, err = p.communicate()
             if out:
                 print(out.decode())
             if err:
                 eprint('[E] stderr:', err.decode())
+            p.terminate()
         return sh
 
     raise NotImplementedError(f'Extension {suf} not supported')
@@ -59,21 +62,21 @@ def random_wan_ip():
         if ip_address.is_global and not ip_address.is_multicast:
             return str(ip_address)
 
-def check(addr, handler):
-    with socket() as s:
-        if s.connect_ex(addr) == 0:
-            try:
-                handler(*addr, s)
-            except Exception as e:
-                eprint('[E]', e)
-
-def worker(port, handler):
+def worker(port, handler, callbacks_sem):
     while True:
         ip = random_wan_ip()
-        check((ip, port), handler)
+        with socket() as s:
+            if s.connect_ex((ip, port)) == 0:
+                with callbacks_sem:
+                    try:
+                        handler(ip, port, s)
+                    except Exception as e:
+                        eprint('[E]', e)
 
 def main(args):
     setdefaulttimeout(args.t)
+
+    callbacks_sem = BoundedSemaphore(args.cbc)
 
     handler = lambda ip, _port, _s: print(ip)
 
@@ -86,7 +89,7 @@ def main(args):
 
     threads = []
     for _ in range(args.w):
-        t = Thread(target=worker, daemon=True, args=(args.p, handler))
+        t = Thread(target=worker, daemon=True, args=(args.p, handler, callbacks_sem))
         threads.append(t)
         t.start()
     
@@ -99,6 +102,7 @@ if __name__ == '__main__':
     parser.add_argument('-w', type=int, default=1024, help='workers count')
     parser.add_argument('-p', type=int, default=80, help='port')
     parser.add_argument('-cb', help='callback handler')
+    parser.add_argument('-cbc', type=int, default=8, help='max parallel callbacs')
 
     try:
         main(parser.parse_args())
