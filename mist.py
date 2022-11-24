@@ -67,12 +67,7 @@ def check(addr, handler):
             except Exception as e:
                 eprint('[E]', e)
 
-def worker(port, cb):
-    try:
-        handler = make_handler(cb)
-    except Exception as e:
-        eprint('[E] cannot create handle:', e)
-        exit(255)
+def worker(port, handler):
     while True:
         ip = random_wan_ip()
         check((ip, port), handler)
@@ -80,9 +75,18 @@ def worker(port, cb):
 def main(args):
     setdefaulttimeout(args.t)
 
+    handler = lambda ip, _port, _s: print(ip)
+
+    if args.cb:
+        try:
+            handler = make_handler(args.cb)
+        except Exception as e:
+            eprint('[E] cannot create handler:', e)
+            exit(255)
+
     threads = []
     for _ in range(args.w):
-        t = Thread(target=worker, daemon=True, args=(args.p, args.cb))
+        t = Thread(target=worker, daemon=True, args=(args.p, handler))
         threads.append(t)
         t.start()
     
