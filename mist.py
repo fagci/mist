@@ -78,7 +78,7 @@ def main(args):
 
     callbacks_sem = BoundedSemaphore(args.cbc)
 
-    handler = lambda ip, _port, _s: print(ip)
+    handler = lambda ip, *_: print(ip)
 
     if args.cb:
         try:
