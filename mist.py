@@ -5,11 +5,8 @@ from ipaddress import IPv4Address
 from random import randrange
 from socket import setdefaulttimeout, socket
 from threading import Thread, BoundedSemaphore
+from sys import stderr
 
-
-def eprint(*args, **kwargs):
-    from sys import stderr
-    print(*args, file=stderr, **kwargs)
 
 class Handler:
     def __init__(self, cb=None, max_cb=8):
@@ -47,7 +44,7 @@ class Handler:
                 if out:
                     print(out.decode())
                 if err:
-                    eprint('[E] stderr:', err.decode())
+                    print('[E] stderr:', err.decode(), file=stderr)
                 p.terminate()
             self.handler = sh
             return
@@ -59,7 +56,7 @@ class Handler:
             try:
                 self.handler(ip, port, s)
             except Exception as e:
-                eprint('[E]', e)
+                print('[E]', e, file=stderr)
 
     @classmethod
     def import_file(cls, full_name, path):
@@ -94,11 +91,10 @@ class Worker(Thread):
                     self.handler.handle(ip, self.port, s)
 
 
-
 def main(args):
     setdefaulttimeout(args.t)
 
-    handler = Handler(args.cb)
+    handler = Handler(args.cb, args.cbc)
 
     threads = []
     for _ in range(args.w):
