@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 from argparse import ArgumentParser
+from importlib.util import module_from_spec, spec_from_file_location
 from random import getrandbits
-from socket import setdefaulttimeout, socket
-from socket import inet_ntoa
+from socket import inet_ntoa, setdefaulttimeout, socket
 from struct import pack
 from subprocess import PIPE, Popen
 from sys import stderr
@@ -31,8 +31,7 @@ class Handler:
             if out:
                 print(out.decode(), end='')
             if err:
-                print('[E] stderr:', file=stderr)
-                print(err.decode(), file=stderr)
+                self.err(err.decode())
         self.handler = sh
 
     def set_py_handler(self, file):
@@ -43,19 +42,22 @@ class Handler:
             try:
                 self.handler(ip, port, s)
             except Exception as e:
-                print('[E]', e, file=stderr)
+                self.err(e)
 
-    @classmethod
-    def import_file(cls, full_name, path):
-        from importlib.util import module_from_spec, spec_from_file_location
+    @staticmethod
+    def err(*args, **kwargs):
+        print('[E]', *args, **kwargs, file=stderr)
+
+    @staticmethod
+    def import_file(full_name, path):
         spec = spec_from_file_location(full_name, path)
 
-        if spec is None or spec.loader is None:
-            raise ModuleNotFoundError('Module not found')
+        if spec and spec.loader:
+            mod = module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
 
-        mod = module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
+        raise ModuleNotFoundError('Module not found')
 
 
 class Worker(Thread):
@@ -71,12 +73,12 @@ class Worker(Thread):
                 if s.connect_ex((ip, self.port)) == 0:
                     self.handler.handle(ip, self.port, s)
 
-    @classmethod
-    def random_wan_ip(cls):
+    @staticmethod
+    def random_wan_ip():
         while True:
-            int_ip = 0x01000000 + getrandbits(32) % 0xfeffffff
-            if (0xe0000000 <= int_ip < 0xffffffff
-                or 0xA000000 <= int_ip < 0xb000000
+            int_ip = 0x01000000 + getrandbits(32) % 0xdeffffff
+
+            if (0xA000000 <= int_ip < 0xb000000
                 or 0x7F000000 <= int_ip < 0x80000000
                 or 0x64400000 <= int_ip < 0x64800000
                 or 0xAC100000 <= int_ip < 0xac200000
