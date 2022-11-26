@@ -11,85 +11,98 @@ def eprint(*args, **kwargs):
     from sys import stderr
     print(*args, file=stderr, **kwargs)
 
-def import_file(full_name, path):
-    from importlib.util import module_from_spec, spec_from_file_location
-    spec = spec_from_file_location(full_name, path)
+class Handler:
+    def __init__(self, cb=None, max_cb=8):
+        if cb is None:
+            self.handler = lambda ip, *_: print(ip)
+            return
+        self.cb_sem = BoundedSemaphore(max_cb)
 
-    if spec is None or spec.loader is None:
-        raise ModuleNotFoundError('Module not found')
+        from pathlib import Path
+        from shutil import which
 
-    mod = module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+        file = Path(cb)
+        is_cmd = which(cb)
 
-def make_handler(cb):
-    from pathlib import Path
-    from shutil import which
+        if not file.exists() and not is_cmd:
+            self.handler = lambda ip, port, s: eval(cb, locals(), locals())
+            return
 
-    file = Path(cb)
-    is_cmd = which(cb)
+        suf = file.suffix
+        path = str(file.absolute())
 
-    if not file.exists() and not is_cmd:
-        return lambda ip, port, s: eval(cb, locals(), locals())
+        if suf == '.py':
+            m = self.import_file(file.name, path)
+            def py(ip, port, s):
+                m.handle(ip, port, s)
+            self.handler = py
+            return
 
-    suf = file.suffix
-    path = str(file.absolute())
+        if file.is_file() or is_cmd:
+            def sh(ip, port, _):
+                from subprocess import PIPE, Popen
+                cmd = [cb if is_cmd else path, ip, str(port)]
+                p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+                out, err = p.communicate()
+                if out:
+                    print(out.decode())
+                if err:
+                    eprint('[E] stderr:', err.decode())
+                p.terminate()
+            self.handler = sh
+            return
 
-    if suf == '.py':
-        m = import_file(file.name, path)
-        def py(ip, port, s):
-            m.handle(ip, port, s)
-        return py
+        raise NotImplementedError(f'not supported')
 
-    if file.is_file() or is_cmd:
-        def sh(ip, port, _):
-            from subprocess import PIPE, Popen
-            cmd = [cb if is_cmd else path, ip, str(port)]
-            p = Popen(cmd, stdout=PIPE, stderr=PIPE)
-            out, err = p.communicate()
-            if out:
-                print(out.decode())
-            if err:
-                eprint('[E] stderr:', err.decode())
-            p.terminate()
-        return sh
+    def handle(self, ip, port, s):
+        with self.cb_sem:
+            try:
+                self.handler(ip, port, s)
+            except Exception as e:
+                eprint('[E]', e)
 
-    raise NotImplementedError(f'Extension {suf} not supported')
+    @classmethod
+    def import_file(cls, full_name, path):
+        from importlib.util import module_from_spec, spec_from_file_location
+        spec = spec_from_file_location(full_name, path)
 
-def random_wan_ip():
-    while True:
-        ip_address = IPv4Address(randrange(0x01000000, 0xffffffff))
-        if ip_address.is_global and not ip_address.is_multicast:
-            return str(ip_address)
+        if spec is None or spec.loader is None:
+            raise ModuleNotFoundError('Module not found')
 
-def worker(port, handler, callbacks_sem):
-    while True:
-        ip = random_wan_ip()
-        with socket() as s:
-            if s.connect_ex((ip, port)) == 0:
-                with callbacks_sem:
-                    try:
-                        handler(ip, port, s)
-                    except Exception as e:
-                        eprint('[E]', e)
+        mod = module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+class Worker(Thread):
+    @classmethod
+    def random_wan_ip(cls):
+        while True:
+            ip_address = IPv4Address(randrange(0x01000000, 0xffffffff))
+            if ip_address.is_global and not ip_address.is_multicast:
+                return str(ip_address)
+
+    def __init__(self, port, handler) -> None:
+        super().__init__(daemon=True)
+        self.port = port
+        self.handler = handler
+
+    def run(self):
+        while True:
+            ip = self.random_wan_ip()
+            with socket() as s:
+                if s.connect_ex((ip, self.port)) == 0:
+                    self.handler.handle(ip, self.port, s)
+
+
 
 def main(args):
     setdefaulttimeout(args.t)
 
-    callbacks_sem = BoundedSemaphore(args.cbc)
-
-    handler = lambda ip, *_: print(ip)
-
-    if args.cb:
-        try:
-            handler = make_handler(args.cb)
-        except Exception as e:
-            eprint('[E] cannot create handler:', e)
-            exit(255)
+    handler = Handler(args.cb)
 
     threads = []
     for _ in range(args.w):
-        t = Thread(target=worker, daemon=True, args=(args.p, handler, callbacks_sem))
+        t = Worker(args.p, handler)
         threads.append(t)
         t.start()
     
