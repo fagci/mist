@@ -4,52 +4,38 @@ from argparse import ArgumentParser
 from ipaddress import IPv4Address
 from random import randrange
 from socket import setdefaulttimeout, socket
-from threading import Thread, BoundedSemaphore
+from subprocess import PIPE, Popen
 from sys import stderr
+from threading import BoundedSemaphore, Thread
 
 
 class Handler:
     def __init__(self, cb=None, max_cb=8):
-        if cb is None:
+        if not cb:
             self.handler = lambda ip, *_: print(ip)
             return
+
         self.cb_sem = BoundedSemaphore(max_cb)
 
-        from pathlib import Path
-        from shutil import which
-
-        file = Path(cb)
-        is_cmd = which(cb)
-
-        if not file.exists() and not is_cmd:
-            self.handler = lambda ip, port, s: eval(cb, locals(), locals())
+        if cb.endswith('.py'):
+            self.set_py_handler(cb)
             return
 
-        suf = file.suffix
-        path = str(file.absolute())
+        self.set_cmd_handler(cb)
 
-        if suf == '.py':
-            m = self.import_file(file.name, path)
-            def py(ip, port, s):
-                m.handle(ip, port, s)
-            self.handler = py
-            return
+    def set_cmd_handler(self, cmd):
+        def sh(ip, port, _):
+            p = Popen([cmd, ip, str(port)], stdout=PIPE, stderr=PIPE)
+            out, err = p.communicate()
+            if out:
+                print(out.decode())
+            if err:
+                print('[E] stderr:', file=stderr)
+                print(err.decode(), file=stderr)
+        self.handler = sh
 
-        if file.is_file() or is_cmd:
-            def sh(ip, port, _):
-                from subprocess import PIPE, Popen
-                cmd = [cb if is_cmd else path, ip, str(port)]
-                p = Popen(cmd, stdout=PIPE, stderr=PIPE)
-                out, err = p.communicate()
-                if out:
-                    print(out.decode())
-                if err:
-                    print('[E] stderr:', err.decode(), file=stderr)
-                p.terminate()
-            self.handler = sh
-            return
-
-        raise NotImplementedError(f'not supported')
+    def set_py_handler(self, file):
+        self.handler = self.import_file('cb', file).handle
 
     def handle(self, ip, port, s):
         with self.cb_sem:
@@ -69,6 +55,7 @@ class Handler:
         mod = module_from_spec(spec)
         spec.loader.exec_module(mod)
         return mod
+
 
 class Worker(Thread):
     @classmethod
