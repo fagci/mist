@@ -1,5 +1,9 @@
 # MInimalistic netSTalker tool
 
+## Example loot
+
+See [@netrandom_loot](https://t.me/netrandom_loot)
+
 ## Usage
 
 ```
