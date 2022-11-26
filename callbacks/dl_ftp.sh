@@ -6,7 +6,7 @@ uri="ftp://$1:$2"
 
 echo "[*] $1"
 
-wget --tries=1 --connect-timeout=1 --read-timeout=5 \
+wget -q --tries=1 --connect-timeout=1 --read-timeout=5 \
     --timestamping --no-netrc \
     -r -X '/bin' -np -nd -Q 100M \
     -A "$extensions" -P "$path" "$uri" \

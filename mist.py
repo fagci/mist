@@ -7,6 +7,9 @@ from socket import setdefaulttimeout, socket
 from subprocess import PIPE, Popen
 from sys import stderr
 from threading import BoundedSemaphore, Thread
+from random import getrandbits
+from socket import inet_ntoa
+from struct import pack
 
 
 class Handler:
@@ -61,9 +64,23 @@ class Worker(Thread):
     @classmethod
     def random_wan_ip(cls):
         while True:
-            ip_address = IPv4Address(randrange(0x01000000, 0xffffffff))
-            if ip_address.is_global and not ip_address.is_multicast:
-                return str(ip_address)
+            int_ip = 0x01000000 + getrandbits(32) % 0xfeffffff
+            if (0xe0000000 <= int_ip < 0xffffffff
+                    or 0xA000000 <= int_ip < 0xb000000
+                    or 0x7F000000 <= int_ip < 0x80000000
+                    or 0x64400000 <= int_ip < 0x64800000
+                    or 0xAC100000 <= int_ip < 0xac200000
+                    or 0xC6120000 <= int_ip < 0xc6140000
+                    or 0xA9FE0000 <= int_ip < 0xa9ff0000
+                    or 0xC0A80000 <= int_ip < 0xc0a90000
+                    or 0xC0000000 <= int_ip < 0xc0000100
+                    or 0xC0000200 <= int_ip < 0xc0000300
+                    or 0xc0586300 <= int_ip < 0xc0586400
+                    or 0xC6336400 <= int_ip < 0xc6336500
+                    or 0xCB007100 <= int_ip < 0xcb007200
+                    or 0xe9fc0000 <= int_ip < 0xe9fc0100):
+                continue
+            return inet_ntoa(pack('>I', int_ip))
 
     def __init__(self, port, handler) -> None:
         super().__init__(daemon=True)
