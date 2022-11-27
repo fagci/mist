@@ -25,7 +25,7 @@ class Handler:
         self.set_cmd_handler(cb)
 
     def set_cmd_handler(self, cmd):
-        def sh(ip, port, s):
+        def sh(ip, port, _):
             p = Popen([cmd, ip, str(port)], stdout=PIPE, stderr=PIPE)
             out, err = p.communicate()
             if out:
@@ -37,11 +37,10 @@ class Handler:
     def set_py_handler(self, file):
         self.handler = self.import_file('cb', file).handle
 
-    def handle(self, addr, s=None):
-        ip, port = addr
+    def handle(self, addr:tuple[str,int], s=None):
         with self.cb_sem:
             try:
-                self.handler(ip, port, s)
+                self.handler(*addr, s)
             except Exception as e:
                 self.err(e)
 
