@@ -37,7 +37,8 @@ class Handler:
     def set_py_handler(self, file):
         self.handler = self.import_file('cb', file).handle
 
-    def handle(self, ip, port, s):
+    def handle(self, addr, s=None):
+        ip, port = addr
         with self.cb_sem:
             try:
                 self.handler(ip, port, s)
@@ -67,12 +68,13 @@ class Worker(Thread):
         self.handle = handler.handle
 
     def run(self):
+        port = self.port
+        wan_ip = self.random_wan_ip
         while True:
-            ip = self.random_wan_ip()
+            addr = (wan_ip(), port)
             with socket() as s:
-                if s.connect_ex((ip, self.port)) == 0:
-                    # TODO: execute scripts wo/socket, as connection can be refused
-                    self.handle(ip, self.port, s)
+                if s.connect_ex(addr) == 0:
+                    self.handle(addr, s)
 
     @staticmethod
     def random_wan_ip():
