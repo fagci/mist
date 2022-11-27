@@ -25,7 +25,7 @@ class Handler:
         self.set_cmd_handler(cb)
 
     def set_cmd_handler(self, cmd):
-        def sh(ip, port, _):
+        def sh(ip, port, s):
             p = Popen([cmd, ip, str(port)], stdout=PIPE, stderr=PIPE)
             out, err = p.communicate()
             if out:
@@ -64,20 +64,18 @@ class Handler:
 class Worker(Thread):
     def __init__(self, port, handler) -> None:
         super().__init__(daemon=True)
-        self.port = port
         self.handle = handler.handle
+        self.addr_generator = self.random_wan_addr(port)
 
     def run(self):
-        port = self.port
-        wan_ip = self.random_wan_ip
-        while True:
-            addr = (wan_ip(), port)
+        for addr in self.addr_generator:
             with socket() as s:
                 if s.connect_ex(addr) == 0:
                     self.handle(addr, s)
 
+    # TODO: random inside specified network
     @staticmethod
-    def random_wan_ip():
+    def random_wan_addr(port):
         while True:
             int_ip = 0x01000000 + getrandbits(32) % 0xdeffffff
 
@@ -95,7 +93,7 @@ class Worker(Thread):
                 or 0xCB007100 <= int_ip < 0xcb007200
                 or 0xe9fc0000 <= int_ip < 0xe9fc0100):
                 continue
-            return inet_ntoa(pack('>I', int_ip))
+            yield (inet_ntoa(pack('>I', int_ip)), port)
 
 
 def main(args):
