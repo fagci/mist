@@ -5,33 +5,29 @@ from importlib.util import module_from_spec, spec_from_file_location
 from random import getrandbits
 from socket import inet_ntoa, setdefaulttimeout, socket
 from struct import pack
-from subprocess import PIPE, Popen
-from sys import stderr
+from subprocess import Popen
+from sys import stderr, stdout
 from threading import BoundedSemaphore, Thread
 
 
 class Handler:
     def __init__(self, cb=None, max_cb=8):
-        if not cb:
-            self.handler = lambda ip, *_: print(ip)
+        if cb:
+            self.cb_sem = BoundedSemaphore(max_cb)
+
+            if cb.endswith('.py'):
+                self.set_py_handler(cb)
+                return
+
+            self.set_cmd_handler(cb)
             return
 
-        self.cb_sem = BoundedSemaphore(max_cb)
-
-        if cb.endswith('.py'):
-            self.set_py_handler(cb)
-            return
-
-        self.set_cmd_handler(cb)
+        self.handler = lambda ip, *_: print(ip)
 
     def set_cmd_handler(self, cmd):
         def sh(ip, port, _):
-            p = Popen([cmd, ip, str(port)], stdout=PIPE, stderr=PIPE)
-            out, err = p.communicate()
-            if out:
-                print(out.decode(), end='')
-            if err:
-                self.err(err.decode())
+            with Popen([cmd, ip, str(port)], stdout=stdout, stderr=stderr) as p:
+                p.communicate()
         self.handler = sh
 
     def set_py_handler(self, file):
