@@ -14,35 +14,28 @@ class Handler:
     def __init__(self, cb=None, max_cb=8):
         if cb:
             self.cb_sem = BoundedSemaphore(max_cb)
-
-            if cb.endswith('.py'):
-                self.set_py_handler(cb)
-                return
-
-            self.set_cmd_handler(cb)
+            self.set_handler(cb)
             return
 
         self.handler = lambda ip, *_: print(ip)
 
-    def set_cmd_handler(self, cmd):
+    def set_handler(self, cmd):
+        if cmd.endswith('.py'):
+            self.handler = self.import_file('cb', cmd).handle
+            return
+
         def sh(ip, port, _):
             with Popen([cmd, ip, str(port)], stdout=stdout, stderr=stderr) as p:
                 p.communicate()
-        self.handler = sh
 
-    def set_py_handler(self, file):
-        self.handler = self.import_file('cb', file).handle
+        self.handler = sh
 
     def handle(self, addr:tuple[str,int], s=None):
         with self.cb_sem:
             try:
                 self.handler(*addr, s)
             except Exception as e:
-                self.err(e)
-
-    @staticmethod
-    def err(*args, **kwargs):
-        print('[E]', *args, **kwargs, file=stderr)
+                print('[E]', e, file=stderr)
 
     @staticmethod
     def import_file(full_name, path):
