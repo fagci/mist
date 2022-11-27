@@ -64,14 +64,15 @@ class Worker(Thread):
     def __init__(self, port, handler) -> None:
         super().__init__(daemon=True)
         self.port = port
-        self.handler = handler
+        self.handle = handler.handle
 
     def run(self):
         while True:
             ip = self.random_wan_ip()
             with socket() as s:
                 if s.connect_ex((ip, self.port)) == 0:
-                    self.handler.handle(ip, self.port, s)
+                    # TODO: execute scripts wo/socket, as connection can be refused
+                    self.handle(ip, self.port, s)
 
     @staticmethod
     def random_wan_ip():
