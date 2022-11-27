@@ -5,7 +5,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from random import getrandbits
 from socket import inet_ntoa, setdefaulttimeout, socket
 from struct import pack
-from subprocess import Popen
+from subprocess import run
 from sys import stderr, stdout
 from threading import BoundedSemaphore, Thread
 
@@ -24,11 +24,8 @@ class Handler:
             self.handler = self.import_file('cb', cmd).handle
             return
 
-        def sh(ip, port, _):
-            with Popen([cmd, ip, str(port)], stdout=stdout, stderr=stderr) as p:
-                p.communicate()
-
-        self.handler = sh
+        io = {'stdout': stdout, 'stderr': stderr}
+        self.handler = lambda ip, port, _: run([cmd, ip, str(port)], **io)
 
     def handle(self, addr:tuple[str,int], s=None):
         with self.cb_sem:
