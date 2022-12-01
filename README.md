@@ -29,6 +29,10 @@ options:
 ./mist.py -p 21 -cb ./callbacks/dl_ftp.sh
 ```
 
+```sh
+./mist.py -p 443 -cb ./callbacks/dl_wp_index.sh -cbc 4
+```
+
 ## Stats
 
 ```
