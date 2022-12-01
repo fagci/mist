@@ -8,7 +8,8 @@ from struct import pack
 from subprocess import run
 from sys import stderr, stdout
 from threading import BoundedSemaphore, Lock, Thread
-from time import sleep
+from time import sleep, time
+from typing import DefaultDict
 
 
 class Handler:
@@ -57,7 +58,7 @@ class Worker(Thread):
         self.handle = handler.handle
         self.addr_generator = self.random_wan_addr(port)
         self.iface = iface
-        self.dbg_fn = dbg_fn if dbg_fn else lambda _: None
+        self.dbg_fn = dbg_fn if dbg_fn else lambda *_: None
 
     def run(self):
         iface = self.iface
@@ -67,10 +68,19 @@ class Worker(Thread):
                 if iface:
                     s.setsockopt(SOL_SOCKET, SO_BINDTODEVICE, iface.encode())
 
-                st = s.connect_ex(addr) == 0
-                if st:
+                err = None
+                t = time()
+                try:
+                    s.connect(addr)
+                except Exception as e:
+                    err = e
+                    pass
+                finally:
+                    dt = time() - t
+                    dbg_fn(dt, err)
+
+                if not err:
                     self.handle(addr, s)
-            dbg_fn(st)
 
     # TODO: random inside specified network
     @staticmethod
@@ -95,26 +105,52 @@ class Worker(Thread):
             yield (inet_ntoa(pack('>I', int_ip)), port)
 
 class Stats(Thread):
+    __slots__ = ('errors', 'last_scan', 'last_pos', 'dt_min', 'dt_max')
+
     def __init__(self, interval):
         super().__init__(daemon=True)
-        self.scanned = 0
-        self.last_scan = 0
-        self.last_pos = 0
+        self.errors = DefaultDict(int)
+        self.times = DefaultDict(int)
         self.inc_lock = Lock()
         self.interval = interval
+        self.reset_counters()
 
-    def on_scanned(self, ok):
+    def reset_counters(self):
+        self.last_scan = 0
+        self.last_pos = 0
+        self.dt_min = 3600
+        self.dt_max = 0
+        self.errors.clear()
+        self.times.clear()
+
+    def on_scanned(self, dt, err):
         with self.inc_lock:
             self.last_scan += 1
-            if ok:
+            if err:
+                self.errors[str(err)] += 1
+            else:
+                self.times[round(dt, 1)] += 1
                 self.last_pos += 1
+                self.dt_min = min(self.dt_min, dt)
+                self.dt_max = max(self.dt_max, dt)
 
     def update_counter(self):
-        print(f'{self.last_pos} / {self.last_scan}')
-        self.scanned += self.last_scan
+        print()
+        print(f'Total: {self.last_scan}')
+        print(f'Found: {self.last_pos}')
+
+        if self.last_pos:
+            print(f'  time: {round(self.dt_min*1000)}..{round(self.dt_max*1000)} ms')
+            for t, c in sorted(self.times.items()):
+                print(f'  {round(t*1000)} ms: {c} ({round(c*100.0/self.last_pos, 1)}%)')
+
+        if self.errors:
+            print('Errors:')
+            for n, c in sorted(self.errors.items()):
+                print(f'  {n}: {c} ({round(c*100.0/self.last_scan, 1)}%)')
+
         with self.inc_lock:
-            self.last_scan = 0
-            self.last_pos = 0
+            self.reset_counters()
 
     def run(self):
         while True:
@@ -126,9 +162,9 @@ def main(args):
 
     handler = Handler(args.cb, args.cbc)
 
-    dbg_fn = lambda _: None
-    if args.dci:
-        dbg = Stats(args.dci)
+    dbg_fn = lambda *_: None
+    if args.si:
+        dbg = Stats(args.si)
         dbg_fn = dbg.on_scanned
         dbg.start()
 
@@ -149,7 +185,7 @@ if __name__ == '__main__':
     parser.add_argument('-cb', help='callback handler')
     parser.add_argument('-i', help='interface to use')
     parser.add_argument('-cbc', type=int, default=8, help='max parallel callbacs')
-    parser.add_argument('-dci', type=float, default=0, help='debug counter interval')
+    parser.add_argument('-si', type=float, default=0, help='stats interval')
 
     try:
         main(parser.parse_args())
