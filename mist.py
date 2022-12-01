@@ -3,11 +3,12 @@
 from argparse import ArgumentParser
 from importlib.util import module_from_spec, spec_from_file_location
 from random import getrandbits
-from socket import inet_ntoa, setdefaulttimeout, socket
+from socket import SOL_SOCKET, SO_BINDTODEVICE, inet_ntoa, setdefaulttimeout, socket
 from struct import pack
 from subprocess import run
 from sys import stderr, stdout
-from threading import BoundedSemaphore, Thread
+from threading import BoundedSemaphore, Lock, Thread
+from time import sleep
 
 
 class Handler:
@@ -19,13 +20,17 @@ class Handler:
 
         self.handler = lambda ip, *_: print(ip)
 
-    def set_handler(self, cmd):
-        if cmd.endswith('.py'):
-            self.handler = self.import_file('cb', cmd).handle
+    def set_handler(self, cb):
+        if cb.endswith('null'):
+            self.handler = lambda *_: None
+            return
+
+        if cb.endswith('.py'):
+            self.handler = self.import_file('cb', cb).handle
             return
 
         io = {'stdout': stdout, 'stderr': stderr}
-        self.handler = lambda ip, port, _: run([cmd, ip, str(port)], **io)
+        self.handler = lambda ip, port, _: run([cb, ip, str(port)], **io)
 
     def handle(self, addr:tuple[str,int], s=None):
         with self.cb_sem:
@@ -47,16 +52,25 @@ class Handler:
 
 
 class Worker(Thread):
-    def __init__(self, port, handler) -> None:
+    def __init__(self, port, handler, iface=None, dbg_fn=None) -> None:
         super().__init__(daemon=True)
         self.handle = handler.handle
         self.addr_generator = self.random_wan_addr(port)
+        self.iface = iface
+        self.dbg_fn = dbg_fn if dbg_fn else lambda _: None
 
     def run(self):
+        iface = self.iface
+        dbg_fn = self.dbg_fn
         for addr in self.addr_generator:
             with socket() as s:
-                if s.connect_ex(addr) == 0:
+                if iface:
+                    s.setsockopt(SOL_SOCKET, SO_BINDTODEVICE, iface.encode())
+
+                st = s.connect_ex(addr) == 0
+                if st:
                     self.handle(addr, s)
+            dbg_fn(st)
 
     # TODO: random inside specified network
     @staticmethod
@@ -80,15 +94,47 @@ class Worker(Thread):
                 continue
             yield (inet_ntoa(pack('>I', int_ip)), port)
 
+class Stats(Thread):
+    def __init__(self, interval):
+        super().__init__(daemon=True)
+        self.scanned = 0
+        self.last_scan = 0
+        self.last_pos = 0
+        self.inc_lock = Lock()
+        self.interval = interval
+
+    def on_scanned(self, ok):
+        with self.inc_lock:
+            self.last_scan += 1
+            if ok:
+                self.last_pos += 1
+
+    def update_counter(self):
+        print(f'{self.last_pos} / {self.last_scan}')
+        self.scanned += self.last_scan
+        with self.inc_lock:
+            self.last_scan = 0
+            self.last_pos = 0
+
+    def run(self):
+        while True:
+            sleep(self.interval)
+            self.update_counter()
 
 def main(args):
     setdefaulttimeout(args.t)
 
     handler = Handler(args.cb, args.cbc)
 
+    dbg_fn = lambda _: None
+    if args.dci:
+        dbg = Stats(args.dci)
+        dbg_fn = dbg.on_scanned
+        dbg.start()
+
     threads = []
     for _ in range(args.w):
-        t = Worker(args.p, handler)
+        t = Worker(args.p, handler, args.i, dbg_fn)
         threads.append(t)
         t.start()
     
@@ -97,11 +143,13 @@ def main(args):
 
 if __name__ == '__main__':
     parser = ArgumentParser(description='Minimalistic netstalker')
-    parser.add_argument('-t', type=float, default=0.75, help='timeout (s)')
+    parser.add_argument('-t', type=float, default=0.55, help='timeout (s)')
     parser.add_argument('-w', type=int, default=1024, help='workers count')
     parser.add_argument('-p', type=int, default=80, help='port')
     parser.add_argument('-cb', help='callback handler')
+    parser.add_argument('-i', help='interface to use')
     parser.add_argument('-cbc', type=int, default=8, help='max parallel callbacs')
+    parser.add_argument('-dci', type=float, default=0, help='debug counter interval')
 
     try:
         main(parser.parse_args())
