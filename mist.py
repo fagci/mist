@@ -26,6 +26,21 @@ class Handler:
             self.handler = lambda *_: None
             return
 
+        if cb.endswith(('.tst', '.log', '.csv', '.tsv')):
+            file = open(cb, 'a')
+            lock = Lock()
+            sep = ':'
+            if cb.endswith('.tsv'):
+                sep = "\t"
+            if cb.endswith('.csv'):
+                sep = ','
+            def write(ip, port, _):
+                with lock:
+                    file.write(f"{ip}{sep}{port}\n")
+                    file.flush()
+            self.handler = write
+            return
+
         if cb.endswith('.py'):
             self.handler = self.import_file('cb', cb).handle
             return
@@ -136,18 +151,19 @@ class Stats(Thread):
 
     def update_counter(self):
         print()
-        print(f'Total: {self.last_scan}')
-        print(f'Found: {self.last_pos}')
+        total = self.last_scan
+        print(f'Total: {total}')
 
         if self.last_pos:
-            print(f'  time: {round(self.dt_min*1000)}..{round(self.dt_max*1000)} ms')
+            print(f'Found: {self.last_pos} ({round(self.last_pos*100.0/total, 1)}%)')
             for t, c in sorted(self.times.items()):
                 print(f'  {round(t*1000)} ms: {c} ({round(c*100.0/self.last_pos, 1)}%)')
 
         if self.errors:
-            print('Errors:')
+            err_cnt = total - self.last_pos
+            print(f'Errors: {err_cnt} ({round(err_cnt*100.0/total, 1)}%)')
             for n, c in sorted(self.errors.items()):
-                print(f'  {n}: {c} ({round(c*100.0/self.last_scan, 1)}%)')
+                print(f'  {n}: {c} ({round(c*100.0/total, 1)}%)')
 
         with self.inc_lock:
             self.reset_counters()
@@ -180,7 +196,7 @@ def main(args):
 if __name__ == '__main__':
     parser = ArgumentParser(description='Minimalistic netstalker')
     parser.add_argument('-t', type=float, default=0.55, help='timeout (s)')
-    parser.add_argument('-w', type=int, default=1024, help='workers count')
+    parser.add_argument('-w', type=int, default=1200, help='workers count')
     parser.add_argument('-p', type=int, default=80, help='port')
     parser.add_argument('-cb', help='callback handler')
     parser.add_argument('-i', help='interface to use')
